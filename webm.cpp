@@ -110,13 +110,14 @@ void play_webm(char const* name) {
         int type = nestegg_track_type(nesteg, i);
         cout << "Track " << i << " codec id: " << id << " type: " << type << " ";
 
-        // Определяем какой кодек будем использовать (указатель на функцию)
-        interface = (id == NESTEGG_CODEC_VP9) ? 
+        // если у нас видео поток
+        if (type == NESTEGG_TRACK_VIDEO) {
+
+            // Определяем какой кодек будем использовать (указатель на функцию)
+            interface = (id == NESTEGG_CODEC_VP9) ? 
                         &vpx_codec_vp9_dx_algo : 
                         &vpx_codec_vp8_dx_algo;
 
-        // если у нас видео поток
-        if (type == NESTEGG_TRACK_VIDEO) {
             // получим параметры текущего потока
             r = nestegg_track_video_params(nesteg, i, &vparams);
             assert(r == 0);
@@ -130,7 +131,10 @@ void play_webm(char const* name) {
             }
 
             // выводим информацию
-            cout << "FPS: " << fpsValue << " Size: " << vparams.width << "x" << vparams.height << " (d: " << vparams.display_width << "x" << vparams.display_height << ")";
+            const char* withAlpha = (vparams.alpha_mode == 1) ? "True" : "False";
+            cout << "FPS: " << fpsValue << " Size: " << vparams.width << "x" << vparams.height 
+                    << " (d: " << vparams.display_width << "x" << vparams.display_height << ")" <<
+                    " Alpha: " << withAlpha;
         }
 
         // аудио поток
@@ -165,8 +169,11 @@ void play_webm(char const* name) {
     SDL_Surface* surface = SDL_SetVideoMode(vparams.display_width,
                                             vparams.display_height,
                                             32,
-                                            SDL_SWSURFACE);
+                                            SDL_HWSURFACE); //SDL_SWSURFACE
     assert(surface);
+
+    // surface color
+    //SDL_FillRect(surface, NULL, SDL_MapRGB(surface->format, 255, 0, 0));
 
     // OVERLAY
     SDL_Overlay* overlay = SDL_CreateYUVOverlay(vparams.width,
@@ -255,9 +262,6 @@ void play_webm(char const* name) {
 
                 // непосредственное декодирование
                 while((img = vpx_codec_get_frame(&codec, &iter))) {
-                    unsigned int plane = 0;
-                    unsigned int y = 0;
-
                     // вывод размеров
                     //cout << "h: " << img->d_h << " w: " << img->d_w << endl;
 
@@ -275,21 +279,27 @@ void play_webm(char const* name) {
                     // Y
                     for (int y = 0; y < img->d_h; ++y){
                         memcpy( overlay->pixels[0] + (overlay->pitches[0]*y),   // куда
-                                img->planes[0] + (img->stride[0]*y),            // откуда
+                                img->planes[VPX_PLANE_Y] + (img->stride[VPX_PLANE_Y]*y),            // откуда
                                 overlay->pitches[0]);                           // сколько байт
+                    }
+                    // V
+                    for (int y = 0; y < (img->d_h >> 1); ++y){
+                        memcpy( overlay->pixels[1] + (overlay->pitches[1]*y),   // куда
+                                img->planes[VPX_PLANE_V] + (img->stride[VPX_PLANE_V]*y),            // откуда
+                                overlay->pitches[1]);                           // сколько байт
                     }
                     // U
                     for (int y = 0; y < (img->d_h >> 1); ++y){
-                        memcpy( overlay->pixels[1] + (overlay->pitches[1]*y),   // куда
-                                img->planes[2] + (img->stride[2]*y),            // откуда
-                                overlay->pitches[1]);                           // сколько байт
-                    }
-                    // V
-                    for (int y=0; y < img->d_h>>1; ++y){
                         memcpy( overlay->pixels[2] + (overlay->pitches[2]*y),   // куда
-                                img->planes[1] + (img->stride[1]*y),            // откуда
+                                img->planes[VPX_PLANE_U] + (img->stride[VPX_PLANE_U]*y),            // откуда
                                 overlay->pitches[2]);                           // сколько байт
                     }
+                    // alpha
+                    /*for (int y = 0; y < img->d_h; ++y){
+                        memcpy( overlay->pixels[2] + (overlay->pitches[2]*y),   // куда
+                                img->planes[VPX_PLANE_ALPHA] + (img->stride[VPX_PLANE_ALPHA]*y),            // откуда
+                                overlay->pitches[2]);                           // сколько байт
+                    }*/
                     SDL_UnlockYUVOverlay(overlay);
 
                     // отображем
