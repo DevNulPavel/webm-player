@@ -7,7 +7,7 @@
 #include <iostream>
 #include <fstream>
 #include <cassert>
- #include <thread>
+#include <thread>
 
 #define HAVE_STDINT_H 1
 extern "C" {
@@ -62,38 +62,10 @@ int64_t ifstream_tell(void* context) {
     return f->tellg();
 }
 
-#if 0
-void logger(nestegg * ctx, unsigned int severity, char const * fmt, ...) {
-    va_list ap;
-    char const * sev = NULL;
-
-    switch (severity) {
-    case NESTEGG_LOG_DEBUG:
-        sev = "debug:   ";
-        break;
-    case NESTEGG_LOG_WARNING:
-        sev = "warning: ";
-        break;
-    case NESTEGG_LOG_CRITICAL:
-        sev = "critical:";
-        break;
-    default:
-        sev = "unknown: ";
-    }
-
-    fprintf(stderr, "%p %s ", (void *) ctx, sev);
-
-    va_start(ap, fmt);
-    vfprintf(stderr, fmt, ap);
-    va_end(ap);
-
-    fprintf(stderr, "\n");
-}
-#endif
 
 // Запуск воспроизведения видео
 void play_webm(char const* name) {
-    nestegg* ne = NULL;
+    nestegg* nesteg = NULL;
 
     // поток чтения из файла
     ifstream infile(name);
@@ -105,18 +77,18 @@ void play_webm(char const* name) {
     ne_io.userdata = (void*)&infile;
 
     // открываем медиа-контейнер
-    int r = nestegg_init(&ne, ne_io, NULL /* logger */, -1);
+    int r = nestegg_init(&nesteg, ne_io, NULL /* logger */, -1);
     assert(r == 0);
 
     // читаем длительность видео
     uint64_t duration = 0;
-    r = nestegg_duration(ne, &duration);
+    r = nestegg_duration(nesteg, &duration);
     assert(r == 0);
     cout << "Duration: " << duration << endl;
 
     // читаем длительность треков
     unsigned int ntracks = 0;
-    r = nestegg_track_count(ne, &ntracks);
+    r = nestegg_track_count(nesteg, &ntracks);
     assert(r == 0);
     cout << "Tracks: " << ntracks << endl;
 
@@ -128,11 +100,11 @@ void play_webm(char const* name) {
     vpx_codec_iface_t* interface = NULL;
     for (int i=0; i < ntracks; ++i) {
         // получаем id кодека
-        int id = nestegg_track_codec_id(ne, i);
+        int id = nestegg_track_codec_id(nesteg, i);
         assert(id >= 0);
 
         // тип трека
-        int type = nestegg_track_type(ne, i);
+        int type = nestegg_track_type(nesteg, i);
         cout << "Track " << i << " codec id: " << id << " type: " << type << " ";
 
         // Определяем какой кодек будем использовать (указатель на функцию)
@@ -142,7 +114,7 @@ void play_webm(char const* name) {
         if (type == NESTEGG_TRACK_VIDEO) {
 
             // получим параметры текущего потока
-            r = nestegg_track_video_params(ne, i, &vparams);
+            r = nestegg_track_video_params(nesteg, i, &vparams);
             assert(r == 0);
 
             // выводим информацию
@@ -152,7 +124,7 @@ void play_webm(char const* name) {
         // аудио поток
         if (type == NESTEGG_TRACK_AUDIO) {
             nestegg_audio_params params;
-            r = nestegg_track_audio_params(ne, i, &params);
+            r = nestegg_track_audio_params(nesteg, i, &params);
             assert(r == 0);
             cout << params.rate << " " << params.channels << " channels " << " depth " << params.depth;
         }
@@ -203,7 +175,7 @@ void play_webm(char const* name) {
         // 1 = keep calling
         // 0 = eof
         // -1 = error
-        r = nestegg_read_packet(ne, &packet);
+        r = nestegg_read_packet(nesteg, &packet);
         if ((r == 1) && (packet == 0)){
             continue;
         }
@@ -219,18 +191,18 @@ void play_webm(char const* name) {
 
         // TODO: workaround bug
         // если трек-видео + ограничение по частоте 24fps
-        bool isVideo = (nestegg_track_type(ne, track) == NESTEGG_TRACK_VIDEO);
+        bool isVideo = (nestegg_track_type(nesteg, track) == NESTEGG_TRACK_VIDEO);
         if (isVideo) {
             ++video_count;
 
-            cout << "video frame: " << video_count << "\t ";
+            //cout << "video frame: " << video_count << "\t ";
 
             // количество пакетов
             unsigned int count = 0;
             r = nestegg_packet_count(packet, &count);
             assert(r == 0);
 
-            cout << "Count: " << count << "\t ";
+            //cout << "Count: " << count << "\t ";
 
             int nframes = 0;
             for (int j=0; j < count; ++j) {
@@ -247,7 +219,7 @@ void play_webm(char const* name) {
 
                 // чтение инфы
                 vpx_codec_peek_stream_info(interface, data, length, &si);
-                cout << "keyframe: " << (si.is_kf ? "yes" : "no") << "\t " << "length: " << length << "\t ";
+                //cout << "keyframe: " << (si.is_kf ? "yes" : "no") << "\t " << "length: " << length << "\t ";
 
                 // Выполнение декодирования кадра
                 vpx_codec_err_t e = vpx_codec_decode(&codec, data, length, NULL, 0);
@@ -265,7 +237,7 @@ void play_webm(char const* name) {
                     unsigned int y = 0;
 
                     // вывод размеров
-                    cout << "h: " << img->d_h << " w: " << img->d_w << endl;
+                    //cout << "h: " << img->d_h << " w: " << img->d_w << endl;
 
                     // номер кадра
                     nframes++;
@@ -309,7 +281,7 @@ void play_webm(char const* name) {
         }
 
         // аудио не выводим
-        /*if (nestegg_track_type(ne, track) == NESTEGG_TRACK_AUDIO) {
+        /*if (nestegg_track_type(nesteg, track) == NESTEGG_TRACK_AUDIO) {
             //cout << "audio frame: " << ++audio_count << endl;
         }*/
 
@@ -339,7 +311,7 @@ void play_webm(char const* name) {
         return;
     }
 
-    nestegg_destroy(ne);
+    nestegg_destroy(nesteg);
     infile.close();
     if (surface) {
         SDL_FreeSurface(surface);
