@@ -137,7 +137,7 @@ void play_webm(char const* name) {
 
         // тип трека
         int type = nestegg_track_type(ne, i);
-        cout << "Track " << i << " codec id: " << id << " type " << type << " ";
+        cout << "Track " << i << " codec id: " << id << " type: " << type << " ";
 
         // Определяем какой кодек будем использовать (указатель на функцию)
         interface = (id == NESTEGG_CODEC_VP9) ? &vpx_codec_vp9_dx_algo : &vpx_codec_vp8_dx_algo;
@@ -150,8 +150,7 @@ void play_webm(char const* name) {
             assert(r == 0);
 
             // выводим информацию
-            cout << vparams.width << "x" << vparams.height
-                 << " (d: " << vparams.display_width << "x" << vparams.display_height << ")";
+            cout << "Size: " << vparams.width << "x" << vparams.height << " (d: " << vparams.display_width << "x" << vparams.display_height << ")";
         }
 
         // аудио поток
@@ -164,12 +163,13 @@ void play_webm(char const* name) {
         cout << endl;
     }
 
-    vpx_codec_ctx_t codec = 0;
+    vpx_codec_ctx_t codec;
     int flags = 0; 
     int frame_cnt = 0;
-    vpx_codec_err_t res = 0;
+    vpx_codec_err_t res;
 
-    cout << "Using " << vpx_codec_iface_name(interface) << endl;
+    cout << "Using codec: " << vpx_codec_iface_name(interface) << endl;
+    cout << endl;
 
     // Инициализация кодека
     if(vpx_codec_dec_init(&codec, interface, NULL, flags)) {
@@ -177,10 +177,25 @@ void play_webm(char const* name) {
         return;
     }
 
+    // инит SDL
+    r = SDL_Init(SDL_INIT_VIDEO);
+    assert(r == 0);
 
-    // Работа с выводом графики
-    SDL_Surface* surface = 0;
-    SDL_Overlay* overlay = 0;
+    // режим отображения СДЛ такой же, как размер видео
+    SDL_Surface* surface = SDL_SetVideoMode(vparams.display_width,
+                                            vparams.display_height,
+                                            32,
+                                            SDL_SWSURFACE);
+    assert(surface);
+
+    // OVERLAY
+    SDL_Overlay* overlay = SDL_CreateYUVOverlay(vparams.width,
+                                                vparams.height,
+                                                SDL_YV12_OVERLAY,
+                                                surface);
+    assert(overlay);
+
+    int32_t videoLastDrawTime = 0;
 
 
     int video_count = 0;
@@ -188,123 +203,136 @@ void play_webm(char const* name) {
     nestegg_packet* packet = 0;
 
     while (1) {
-        // читаем пакет пока не прочитается
-        // 1 = keep calling
-        // 0 = eof
-        // -1 = error
-        r = nestegg_read_packet(ne, &packet);
-        if ((r == 1) && (packet == 0)){
-            continue;
-        }
-        if (r <=0){
-            break;
-        }
 
-        // получаем трек из пакета
-        unsigned int track = 0;
-        r = nestegg_packet_track(packet, &track);
-        assert(r == 0);
+        // ограничение в 60 кадров в сек
+        int32_t sdlNow = SDL_GetTicks(); 
+        if (float(sdlNow - videoLastDrawTime)/1000 > 1.0/60.0){
+            videoLastDrawTime = sdlNow; 
 
-        // TODO: workaround bug
-        // если трек-видео
-        if (nestegg_track_type(ne, track) == NESTEGG_TRACK_VIDEO) {
-            cout << "video frame: " << ++video_count << " ";
-
-            // количество пакетов
-            unsigned int count = 0;
-            r = nestegg_packet_count(packet, &count);
-            assert(r == 0);
-
-            cout << "Count: " << count << " ";
-
-            int nframes = 0;
-            for (int j=0; j < count; ++j) {
-                unsigned char* data;
-                size_t length;
-                r = nestegg_packet_data(packet, j, &data, &length);
-                assert(r == 0);
-
-                vpx_codec_stream_info_t si;
-                memset(&si, 0, sizeof(si));
-                si.sz = sizeof(si);
-                vpx_codec_peek_stream_info(interface, data, length, &si);
-                cout << "keyframe: " << (si.is_kf ? "yes" : "no") << " ";
-
-                cout << "length: " << length << " ";
-                /* Decode the frame */
-                vpx_codec_err_t e = vpx_codec_decode(&codec, data, length, NULL, 0);
-                if (e) {
-                    cerr << "Failed to decode frame. error: " << e << endl;
-                    return;
-                }
-                vpx_codec_iter_t  iter = NULL;
-                vpx_image_t      *img;
-
-                /* Write decoded data to disk */
-                while((img = vpx_codec_get_frame(&codec, &iter))) {
-                    unsigned int plane, y;
-
-                    cout << "h: " << img->d_h << " w: " << img->d_w << endl;
-                    if (!surface) {
-                        r = SDL_Init(SDL_INIT_VIDEO);
-                        assert(r == 0);
-
-                        surface = SDL_SetVideoMode(vparams.display_width,
-                                                   vparams.display_height,
-                                                   32,
-                                                   SDL_SWSURFACE);
-                        assert(surface);
-                        overlay = SDL_CreateYUVOverlay(vparams.width,
-                                                       vparams.height,
-                                                       SDL_YV12_OVERLAY,
-                                                       surface);
-                        assert(overlay);
-
-                    }
-                    nframes++;
-
-                    SDL_Rect rect;
-                    rect.x = 0;
-                    rect.y = 0;
-                    rect.w = vparams.display_width;
-                    rect.h = vparams.display_height;
-
-                    SDL_LockYUVOverlay(overlay);
-                    for (int y=0; y < img->d_h; ++y)
-                        memcpy(overlay->pixels[0]+(overlay->pitches[0]*y),
-                               img->planes[0]+(img->stride[0]*y),
-                               overlay->pitches[0]);
-                    for (int y=0; y < img->d_h>>1; ++y)
-                        memcpy(overlay->pixels[1]+(overlay->pitches[1]*y),
-                               img->planes[2]+(img->stride[2]*y),
-                               overlay->pitches[1]);
-                    for (int y=0; y < img->d_h>>1; ++y)
-                        memcpy(overlay->pixels[2]+(overlay->pitches[2]*y),
-                               img->planes[1]+(img->stride[1]*y),
-                               overlay->pitches[2]);
-                    SDL_UnlockYUVOverlay(overlay);
-                    SDL_DisplayYUVOverlay(overlay, &rect);
-                }
-
-                cout << "nframes: " << nframes;
+            // читаем пакет пока не прочитается
+            // 1 = keep calling
+            // 0 = eof
+            // -1 = error
+            r = nestegg_read_packet(ne, &packet);
+            if ((r == 1) && (packet == 0)){
+                continue;
+            }
+            if (r <=0){
+                break;
             }
 
-            cout << endl;
+            // получаем трек из пакета
+            unsigned int track = 0;
+            r = nestegg_packet_track(packet, &track);
+            assert(r == 0);
+
+            int32_t sdlNow = SDL_GetTicks(); 
+
+            // TODO: workaround bug
+            // если трек-видео + ограничение по частоте 24fps
+            bool isVideo = (nestegg_track_type(ne, track) == NESTEGG_TRACK_VIDEO);
+            if (isVideo) {
+                ++video_count;
+
+                cout << "video frame: " << video_count << "\t ";
+
+                // количество пакетов
+                unsigned int count = 0;
+                r = nestegg_packet_count(packet, &count);
+                assert(r == 0);
+
+                cout << "Count: " << count << "\t ";
+
+                int nframes = 0;
+                for (int j=0; j < count; ++j) {
+                    // чтение
+                    unsigned char* data = NULL;    // нету смысла тратить такты на обнуление?? (= NULL)
+                    size_t length = 0;             // сколько данных получено
+                    r = nestegg_packet_data(packet, j, &data, &length);
+                    assert(r == 0);
+
+                    // инфа потока
+                    vpx_codec_stream_info_t si;
+                    memset(&si, 0, sizeof(si));
+                    si.sz = sizeof(si);
+
+                    // чтение инфы
+                    vpx_codec_peek_stream_info(interface, data, length, &si);
+                    cout << "keyframe: " << (si.is_kf ? "yes" : "no") << "\t " << "length: " << length << "\t ";
+
+                    // Выполнение декодирования кадра
+                    vpx_codec_err_t e = vpx_codec_decode(&codec, data, length, NULL, 0);
+                    if (e) {
+                        cerr << "Failed to decode frame. error: " << e << endl;
+                        return;
+                    }
+
+                    vpx_codec_iter_t iter = NULL;
+                    vpx_image_t* img = NULL;
+
+                    // непосредственное декодирование
+                    while((img = vpx_codec_get_frame(&codec, &iter))) {
+                        unsigned int plane = 0;
+                        unsigned int y = 0;
+
+                        // вывод размеров
+                        cout << "h: " << img->d_h << " w: " << img->d_w << endl;
+
+                        // номер кадра
+                        nframes++;
+
+                        SDL_Rect rect;
+                        rect.x = 0;
+                        rect.y = 0;
+                        rect.w = vparams.display_width;
+                        rect.h = vparams.display_height;
+
+                        // блокировка записи-чтения оверлея
+                        SDL_LockYUVOverlay(overlay);
+                        // Y
+                        for (int y = 0; y < img->d_h; ++y){
+                            memcpy( overlay->pixels[0] + (overlay->pitches[0]*y),   // куда
+                                    img->planes[0] + (img->stride[0]*y),            // откуда
+                                    overlay->pitches[0]);                           // сколько байт
+                        }
+                        // U
+                        for (int y = 0; y < (img->d_h >> 1); ++y){
+                            memcpy( overlay->pixels[1] + (overlay->pitches[1]*y),   // куда
+                                    img->planes[2] + (img->stride[2]*y),            // откуда
+                                    overlay->pitches[1]);                           // сколько байт
+                        }
+                        // V
+                        for (int y=0; y < img->d_h>>1; ++y){
+                            memcpy( overlay->pixels[2] + (overlay->pitches[2]*y),   // куда
+                                    img->planes[1] + (img->stride[1]*y),            // откуда
+                                    overlay->pitches[2]);                           // сколько байт
+                        }
+                        SDL_UnlockYUVOverlay(overlay);
+
+                        // отображем
+                        SDL_DisplayYUVOverlay(overlay, &rect);
+                    }
+
+                    //cout << "nframes: " << nframes;
+                }
+
+                //cout << endl;
+            }
         }
 
-        if (nestegg_track_type(ne, track) == NESTEGG_TRACK_AUDIO) {
-            cout << "audio frame: " << ++audio_count << endl;
-        }
-
+        // аудио не выводим
+        /*if (nestegg_track_type(ne, track) == NESTEGG_TRACK_AUDIO) {
+            //cout << "audio frame: " << ++audio_count << endl;
+        }*/
 
         SDL_Event event;
         if (SDL_PollEvent(&event) == 1) {
-            if (event.type == SDL_KEYDOWN &&
-                    event.key.keysym.sym == SDLK_ESCAPE)
+            if ((event.type == SDL_KEYDOWN) && event.key.keysym.sym == SDLK_ESCAPE){
                 break;
-            if (event.type == SDL_KEYDOWN &&
-                    event.key.keysym.sym == SDLK_SPACE)
+            }
+            if ((event.type == SDL_KEYDOWN) && (event.key.keysym.sym == SDLK_SPACE)){
                 SDL_WM_ToggleFullScreen(surface);
+            }
         }
     }
 
