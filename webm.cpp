@@ -111,11 +111,12 @@ void play_webm(char const* name) {
         cout << "Track " << i << " codec id: " << id << " type: " << type << " ";
 
         // Определяем какой кодек будем использовать (указатель на функцию)
-        interface = (id == NESTEGG_CODEC_VP9) ? &vpx_codec_vp9_dx_algo : &vpx_codec_vp8_dx_algo;
+        interface = (id == NESTEGG_CODEC_VP9) ? 
+                        &vpx_codec_vp9_dx_algo : 
+                        &vpx_codec_vp8_dx_algo;
 
         // если у нас видео поток
         if (type == NESTEGG_TRACK_VIDEO) {
-
             // получим параметры текущего потока
             r = nestegg_track_video_params(nesteg, i, &vparams);
             assert(r == 0);
@@ -190,10 +191,18 @@ void play_webm(char const* name) {
         if ((r == 1) && (packet == 0)){
             continue;
         }
+        if (r == 0) {
+            // переход к началу
+            for (int i = 0; i < ntracks; ++i){
+                nestegg_track_seek(nesteg, i, 0);
+            }
+            continue;
+        }
         if (r <= 0){
             // выход при завершении
             break;
         }
+
 
         // получаем трек из пакета
         unsigned int track = 0;
@@ -216,7 +225,9 @@ void play_webm(char const* name) {
             //cout << "Count: " << count << "\t ";
 
             int nframes = 0;
-            for (int j=0; j < count; ++j) {
+            // for (int j=0; j < count; ++j) {
+            // проверка проигрывания одного кадра
+            for (int j=0; j < 1; ++j) {
                 // чтение
                 unsigned char* data = NULL;    // нету смысла тратить такты на обнуление?? (= NULL)
                 size_t length = 0;             // сколько данных получено
@@ -295,6 +306,10 @@ void play_webm(char const* name) {
         /*if (nestegg_track_type(nesteg, track) == NESTEGG_TRACK_AUDIO) {
             //cout << "audio frame: " << ++audio_count << endl;
         }*/
+
+        // чистим
+        nestegg_free_packet(packet);
+        packet = 0;
 
         SDL_Event event;
         if (SDL_PollEvent(&event) == 1) {
