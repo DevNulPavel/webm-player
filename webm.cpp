@@ -97,6 +97,9 @@ void play_webm(char const* name) {
     vparams.width = 0;
     vparams.height = 0;
 
+    // частота FPS
+    int fpsValue = 0;
+
     vpx_codec_iface_t* interface = NULL;
     for (int i=0; i < ntracks; ++i) {
         // получаем id кодека
@@ -117,8 +120,16 @@ void play_webm(char const* name) {
             r = nestegg_track_video_params(nesteg, i, &vparams);
             assert(r == 0);
 
+            // получим частоту кадров видео
+            uint64_t frameDurationNanoSec = 0;
+            nestegg_track_default_duration(nesteg, i, &frameDurationNanoSec);
+            fpsValue = static_cast<int>(frameDurationNanoSec / 1000.0f / 1000.0f);
+            if (fpsValue == 0){
+                fpsValue = 24;
+            }
+
             // выводим информацию
-            cout << "Size: " << vparams.width << "x" << vparams.height << " (d: " << vparams.display_width << "x" << vparams.display_height << ")";
+            cout << "FPS: " << fpsValue << " Size: " << vparams.width << "x" << vparams.height << " (d: " << vparams.display_width << "x" << vparams.display_height << ")";
         }
 
         // аудио поток
@@ -296,12 +307,11 @@ void play_webm(char const* name) {
         }
 
         // ограничение в 60 кадров в сек
-        const float fps = 30.0f;
         int32_t sdlNow = SDL_GetTicks();
         float delta = static_cast<float>(sdlNow - videoLastDrawTime)/1000.0f;
         videoLastDrawTime = sdlNow;
-        if (delta < 1.0f/fps){
-            float delayForSleep = std::max(1.0f/fps - delta, 0.0f);
+        if (delta < 1.0f/fpsValue){
+            float delayForSleep = std::max(1.0f/fpsValue - delta, 0.0f);
             std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(delayForSleep * 1000)));
         }
     }
