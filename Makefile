@@ -1,16 +1,20 @@
-UNAME=$(shell uname -s)
+
+INCLUDE = -I. -Inestegg/include -Inestegg/halloc -Ilibvpx/vpx -Ilibvpx/vpx_codec -Ilibvpx/vpx_ports
+LIBS_PATH = -L. -L/usr/local/lib
+LIBS = -lvorbis -logg -lSDL vpx-build/libvpx.a
+
+UNAME = $(shell uname -s)
+# Linux
 ifeq "$(UNAME)" "Linux"
-INCLUDE=
-LIBS=-lasound
+	LIBS += -lasound
 endif
-
+# OSX
 ifeq "$(UNAME)" "Darwin"
-#INCLUDE=-I/opt/local/include
-LIBS=-lSDLmain -framework Carbon -framework CoreAudio -framework AudioToolbox -framework AudioUnit -framework Cocoa
+	INCLUDE += -I/opt/local/include -I/usr/local/include
+	LIBS += -lSDLmain -framework Carbon -framework CoreAudio -framework AudioToolbox -framework AudioUnit -framework Cocoa
 endif
 
-INCLUDE +=-I. -Inestegg/include -Inestegg/halloc -Ilibvpx/vpx -Ilibvpx/vpx_codec -Ilibvpx/vpx_ports
-LIBS += vpx-build/libvpx.a
+
 
 all: webm
 
@@ -30,7 +34,7 @@ webm.o: webm.cpp vpx-build/libvpx.a nestegg/src/nestegg.o
 	g++ -g -c $(INCLUDE) -o webm.o webm.cpp
 
 webm: webm.o nestegg/halloc/src/halloc.o nestegg/src/nestegg.o vpx-build/libvpx.a
-	g++ -g -o webm webm.o nestegg/halloc/src/halloc.o nestegg/src/nestegg.o -lvorbis -logg -lSDL $(LIBS)
+	g++ -g -o webm webm.o nestegg/halloc/src/halloc.o nestegg/src/nestegg.o $(LIBS_PATH) $(LIBS)
 
 clean: 
 	rm -f *.o webm && rm -r vpx-build && make -C nestegg clean
