@@ -7,6 +7,7 @@
 #include <iostream>
 #include <fstream>
 #include <cassert>
+ #include <thread>
 
 #define HAVE_STDINT_H 1
 extern "C" {
@@ -19,11 +20,6 @@ extern "C" {
 
 using namespace std;
 
-
-
-static unsigned int mem_get_le32(const unsigned char *mem) {
-    return (mem[3] << 24)|(mem[2] << 16)|(mem[1] << 8)|(mem[0]);
-}
 
 // читаем в буффер данные из потока
 int ifstream_read(void* buffer, size_t size, void* context) {
@@ -172,7 +168,7 @@ void play_webm(char const* name) {
     cout << endl;
 
     // Инициализация кодека
-    if(vpx_codec_dec_init(&codec, interface, NULL, flags)) {
+    if((res = vpx_codec_dec_init(&codec, interface, NULL, flags))) {
         cerr << "Failed to initialize decoder" << endl;
         return;
     }
@@ -203,121 +199,113 @@ void play_webm(char const* name) {
     nestegg_packet* packet = 0;
 
     while (1) {
+        // читаем пакет пока не прочитается
+        // 1 = keep calling
+        // 0 = eof
+        // -1 = error
+        r = nestegg_read_packet(ne, &packet);
+        if ((r == 1) && (packet == 0)){
+            continue;
+        }
+        if (r <= 0){
+            // выход при завершении
+            break;
+        }
 
-        // ограничение в 60 кадров в сек
-        int32_t sdlNow = SDL_GetTicks(); 
-        if (float(sdlNow - videoLastDrawTime)/1000 > 1.0/60.0){
-            videoLastDrawTime = sdlNow; 
+        // получаем трек из пакета
+        unsigned int track = 0;
+        r = nestegg_packet_track(packet, &track);
+        assert(r == 0);
 
-            // читаем пакет пока не прочитается
-            // 1 = keep calling
-            // 0 = eof
-            // -1 = error
-            r = nestegg_read_packet(ne, &packet);
-            if ((r == 1) && (packet == 0)){
-                continue;
-            }
-            if (r <=0){
-                break;
-            }
+        // TODO: workaround bug
+        // если трек-видео + ограничение по частоте 24fps
+        bool isVideo = (nestegg_track_type(ne, track) == NESTEGG_TRACK_VIDEO);
+        if (isVideo) {
+            ++video_count;
 
-            // получаем трек из пакета
-            unsigned int track = 0;
-            r = nestegg_packet_track(packet, &track);
+            cout << "video frame: " << video_count << "\t ";
+
+            // количество пакетов
+            unsigned int count = 0;
+            r = nestegg_packet_count(packet, &count);
             assert(r == 0);
 
-            int32_t sdlNow = SDL_GetTicks(); 
+            cout << "Count: " << count << "\t ";
 
-            // TODO: workaround bug
-            // если трек-видео + ограничение по частоте 24fps
-            bool isVideo = (nestegg_track_type(ne, track) == NESTEGG_TRACK_VIDEO);
-            if (isVideo) {
-                ++video_count;
-
-                cout << "video frame: " << video_count << "\t ";
-
-                // количество пакетов
-                unsigned int count = 0;
-                r = nestegg_packet_count(packet, &count);
+            int nframes = 0;
+            for (int j=0; j < count; ++j) {
+                // чтение
+                unsigned char* data = NULL;    // нету смысла тратить такты на обнуление?? (= NULL)
+                size_t length = 0;             // сколько данных получено
+                r = nestegg_packet_data(packet, j, &data, &length);
                 assert(r == 0);
 
-                cout << "Count: " << count << "\t ";
+                // инфа потока
+                vpx_codec_stream_info_t si;
+                memset(&si, 0, sizeof(si));
+                si.sz = sizeof(si);
 
-                int nframes = 0;
-                for (int j=0; j < count; ++j) {
-                    // чтение
-                    unsigned char* data = NULL;    // нету смысла тратить такты на обнуление?? (= NULL)
-                    size_t length = 0;             // сколько данных получено
-                    r = nestegg_packet_data(packet, j, &data, &length);
-                    assert(r == 0);
+                // чтение инфы
+                vpx_codec_peek_stream_info(interface, data, length, &si);
+                cout << "keyframe: " << (si.is_kf ? "yes" : "no") << "\t " << "length: " << length << "\t ";
 
-                    // инфа потока
-                    vpx_codec_stream_info_t si;
-                    memset(&si, 0, sizeof(si));
-                    si.sz = sizeof(si);
-
-                    // чтение инфы
-                    vpx_codec_peek_stream_info(interface, data, length, &si);
-                    cout << "keyframe: " << (si.is_kf ? "yes" : "no") << "\t " << "length: " << length << "\t ";
-
-                    // Выполнение декодирования кадра
-                    vpx_codec_err_t e = vpx_codec_decode(&codec, data, length, NULL, 0);
-                    if (e) {
-                        cerr << "Failed to decode frame. error: " << e << endl;
-                        return;
-                    }
-
-                    vpx_codec_iter_t iter = NULL;
-                    vpx_image_t* img = NULL;
-
-                    // непосредственное декодирование
-                    while((img = vpx_codec_get_frame(&codec, &iter))) {
-                        unsigned int plane = 0;
-                        unsigned int y = 0;
-
-                        // вывод размеров
-                        cout << "h: " << img->d_h << " w: " << img->d_w << endl;
-
-                        // номер кадра
-                        nframes++;
-
-                        SDL_Rect rect;
-                        rect.x = 0;
-                        rect.y = 0;
-                        rect.w = vparams.display_width;
-                        rect.h = vparams.display_height;
-
-                        // блокировка записи-чтения оверлея
-                        SDL_LockYUVOverlay(overlay);
-                        // Y
-                        for (int y = 0; y < img->d_h; ++y){
-                            memcpy( overlay->pixels[0] + (overlay->pitches[0]*y),   // куда
-                                    img->planes[0] + (img->stride[0]*y),            // откуда
-                                    overlay->pitches[0]);                           // сколько байт
-                        }
-                        // U
-                        for (int y = 0; y < (img->d_h >> 1); ++y){
-                            memcpy( overlay->pixels[1] + (overlay->pitches[1]*y),   // куда
-                                    img->planes[2] + (img->stride[2]*y),            // откуда
-                                    overlay->pitches[1]);                           // сколько байт
-                        }
-                        // V
-                        for (int y=0; y < img->d_h>>1; ++y){
-                            memcpy( overlay->pixels[2] + (overlay->pitches[2]*y),   // куда
-                                    img->planes[1] + (img->stride[1]*y),            // откуда
-                                    overlay->pitches[2]);                           // сколько байт
-                        }
-                        SDL_UnlockYUVOverlay(overlay);
-
-                        // отображем
-                        SDL_DisplayYUVOverlay(overlay, &rect);
-                    }
-
-                    //cout << "nframes: " << nframes;
+                // Выполнение декодирования кадра
+                vpx_codec_err_t e = vpx_codec_decode(&codec, data, length, NULL, 0);
+                if (e) {
+                    cerr << "Failed to decode frame. error: " << e << endl;
+                    return;
                 }
 
-                //cout << endl;
+                vpx_codec_iter_t iter = NULL;
+                vpx_image_t* img = NULL;
+
+                // непосредственное декодирование
+                while((img = vpx_codec_get_frame(&codec, &iter))) {
+                    unsigned int plane = 0;
+                    unsigned int y = 0;
+
+                    // вывод размеров
+                    cout << "h: " << img->d_h << " w: " << img->d_w << endl;
+
+                    // номер кадра
+                    nframes++;
+
+                    SDL_Rect rect;
+                    rect.x = 0;
+                    rect.y = 0;
+                    rect.w = vparams.display_width;
+                    rect.h = vparams.display_height;
+
+                    // блокировка записи-чтения оверлея
+                    SDL_LockYUVOverlay(overlay);
+                    // Y
+                    for (int y = 0; y < img->d_h; ++y){
+                        memcpy( overlay->pixels[0] + (overlay->pitches[0]*y),   // куда
+                                img->planes[0] + (img->stride[0]*y),            // откуда
+                                overlay->pitches[0]);                           // сколько байт
+                    }
+                    // U
+                    for (int y = 0; y < (img->d_h >> 1); ++y){
+                        memcpy( overlay->pixels[1] + (overlay->pitches[1]*y),   // куда
+                                img->planes[2] + (img->stride[2]*y),            // откуда
+                                overlay->pitches[1]);                           // сколько байт
+                    }
+                    // V
+                    for (int y=0; y < img->d_h>>1; ++y){
+                        memcpy( overlay->pixels[2] + (overlay->pitches[2]*y),   // куда
+                                img->planes[1] + (img->stride[1]*y),            // откуда
+                                overlay->pitches[2]);                           // сколько байт
+                    }
+                    SDL_UnlockYUVOverlay(overlay);
+
+                    // отображем
+                    SDL_DisplayYUVOverlay(overlay, &rect);
+                }
+
+                //cout << "nframes: " << nframes;
             }
+
+            //cout << endl;
         }
 
         // аудио не выводим
@@ -333,6 +321,16 @@ void play_webm(char const* name) {
             if ((event.type == SDL_KEYDOWN) && (event.key.keysym.sym == SDLK_SPACE)){
                 SDL_WM_ToggleFullScreen(surface);
             }
+        }
+
+        // ограничение в 60 кадров в сек
+        const float fps = 30.0f;
+        int32_t sdlNow = SDL_GetTicks();
+        float delta = static_cast<float>(sdlNow - videoLastDrawTime)/1000.0f;
+        videoLastDrawTime = sdlNow;
+        if (delta < 1.0f/fps){
+            float delayForSleep = std::max(1.0f/fps - delta, 0.0f);
+            std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(delayForSleep * 1000)));
         }
     }
 
