@@ -232,14 +232,19 @@ void play_webm(char const* name) {
             //cout << "Count: " << count << "\t ";
 
             int nframes = 0;
-            // for (int j=0; j < count; ++j) {
+            for (int j=0; j < count; ++j) {
             // проверка проигрывания одного кадра
-            for (int j=0; j < 1; ++j) {
+            //for (int j=0; j < 1; ++j) {
                 // чтение
                 unsigned char* data = NULL;    // нету смысла тратить такты на обнуление?? (= NULL)
                 size_t length = 0;             // сколько данных получено
                 r = nestegg_packet_data(packet, j, &data, &length);
                 assert(r == 0);
+
+                // чтение дополнительной инфы (Альфа)
+                unsigned char* additionalData = NULL;    // нету смысла тратить такты на обнуление?? (= NULL)
+                size_t additionalLength = 0;             // сколько данных получено
+                r = nestegg_packet_additional_data(packet, 1, &additionalData, &additionalLength);
 
                 // инфа потока
                 vpx_codec_stream_info_t si;
@@ -256,6 +261,12 @@ void play_webm(char const* name) {
                     cerr << "Failed to decode frame. error: " << e << endl;
                     return;
                 }
+                
+                /*vpx_codec_err_t e = vpx_codec_decode(&codec, additionalData, additionalData, NULL, 0);
+                if (e) {
+                    cerr << "Failed to decode frame. error: " << e << endl;
+                    return;
+                }*/
 
                 vpx_codec_iter_t iter = NULL;
                 vpx_image_t* img = NULL;
