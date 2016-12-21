@@ -99,9 +99,11 @@ void play_webm(char const* name) {
 
     // частота FPS
     int fpsValue = 0;
+    int videoCodec = 0;
+    bool withAlpha = false;
 
     vpx_codec_iface_t* interface = NULL;
-    for (int i=0; i < ntracks; ++i) {
+    for (int i = 0; i < ntracks; ++i) {
         // получаем id кодека
         int id = nestegg_track_codec_id(nesteg, i);
         assert(id >= 0);
@@ -118,6 +120,9 @@ void play_webm(char const* name) {
                         &vpx_codec_vp9_dx_algo : 
                         &vpx_codec_vp8_dx_algo;
 
+            // сохраняем кодек на будущее
+            videoCodec = id;
+
             // получим параметры текущего потока
             r = nestegg_track_video_params(nesteg, i, &vparams);
             assert(r == 0);
@@ -131,10 +136,11 @@ void play_webm(char const* name) {
             }
 
             // выводим информацию
-            const char* withAlpha = (vparams.alpha_mode == 1) ? "True" : "False";
+            withAlpha = (vparams.alpha_mode == 1);
+            const char* withAlphaText = withAlpha ? "True" : "False";
             cout << "FPS: " << fpsValue << " Size: " << vparams.width << "x" << vparams.height 
                     << " (d: " << vparams.display_width << "x" << vparams.display_height << ")" <<
-                    " Alpha: " << withAlpha;
+                    " Alpha: " << withAlphaText;
         }
 
         // аудио поток
@@ -147,34 +153,38 @@ void play_webm(char const* name) {
         cout << endl;
     }
 
+    // Инициализация кодека для обычного видео
     vpx_codec_ctx_t codec;
-    int flags = 0; 
-    int frame_cnt = 0;
     vpx_codec_err_t res;
-
-    cout << "Using codec: " << vpx_codec_iface_name(interface) << endl;
-    cout << endl;
-
-    // Инициализация кодека
-    if((res = vpx_codec_dec_init(&codec, interface, NULL, flags))) {
+    if((res = vpx_codec_dec_init(&codec, interface, NULL, 0))) {
         cerr << "Failed to initialize decoder" << endl;
         return;
     }
 
+    // инициализация кодека для альфы
+    vpx_codec_ctx_t alphaСodec;
+    if (withAlpha){
+        vpx_codec_err_t res;
+        if((res = vpx_codec_dec_init(&alphaСodec, interface, NULL, 0))) {
+            cerr << "Failed to initialize decoder" << endl;
+            return;
+        }
+    }
+
+    cout << "Using codec: " << vpx_codec_iface_name(interface) << endl;
+    cout << endl;
+
     // инит SDL
     r = SDL_Init(SDL_INIT_VIDEO);
     assert(r == 0);
-
     // режим отображения СДЛ такой же, как размер видео
     SDL_Surface* surface = SDL_SetVideoMode(vparams.display_width,
                                             vparams.display_height,
                                             32,
                                             SDL_HWSURFACE); //SDL_SWSURFACE
     assert(surface);
-
     // surface color
     //SDL_FillRect(surface, NULL, SDL_MapRGB(surface->format, 255, 0, 0));
-
     // OVERLAY
     SDL_Overlay* overlay = SDL_CreateYUVOverlay(vparams.width,
                                                 vparams.height,
@@ -182,9 +192,8 @@ void play_webm(char const* name) {
                                                 surface);
     assert(overlay);
 
+
     int32_t videoLastDrawTime = 0;
-
-
     int video_count = 0;
     int audio_count = 0;
     nestegg_packet* packet = 0;
@@ -231,29 +240,34 @@ void play_webm(char const* name) {
 
             //cout << "Count: " << count << "\t ";
 
-            int nframes = 0;
-            for (int j=0; j < count; ++j) {
-            // проверка проигрывания одного кадра
-            //for (int j=0; j < 1; ++j) {
+            SDL_Rect rect;
+            rect.x = 0;
+            rect.y = 0;
+            rect.w = vparams.display_width;
+            rect.h = vparams.display_height;
+
+            for (int j = 0; j < count; ++j) { // for (int j=0; j < 1; ++j) { // проверка проигрывания одного кадра
                 // чтение
                 unsigned char* data = NULL;    // нету смысла тратить такты на обнуление?? (= NULL)
                 size_t length = 0;             // сколько данных получено
                 r = nestegg_packet_data(packet, j, &data, &length);
                 assert(r == 0);
 
-                // чтение дополнительной инфы (Альфа)
+                // чтение альфы
                 unsigned char* additionalData = NULL;    // нету смысла тратить такты на обнуление?? (= NULL)
                 size_t additionalLength = 0;             // сколько данных получено
-                r = nestegg_packet_additional_data(packet, 1, &additionalData, &additionalLength);
+                if (withAlpha) {
+                    r = nestegg_packet_additional_data(packet, 1, &additionalData, &additionalLength);
+                }
 
                 // инфа потока
-                vpx_codec_stream_info_t si;
+                /*vpx_codec_stream_info_t si;
                 memset(&si, 0, sizeof(si));
                 si.sz = sizeof(si);
-
-                // чтение инфы
                 vpx_codec_peek_stream_info(interface, data, length, &si);
-                //cout << "keyframe: " << (si.is_kf ? "yes" : "no") << "\t " << "length: " << length << "\t ";
+                cout << "Additional data length: " << additionalLength << endl;
+                cout << "keyframe: " << (si.is_kf ? "yes" : "no") << "\t " << "length: " << length << "\t ";
+                */
 
                 // Выполнение декодирования кадра
                 vpx_codec_err_t e = vpx_codec_decode(&codec, data, length, NULL, 0);
@@ -261,30 +275,11 @@ void play_webm(char const* name) {
                     cerr << "Failed to decode frame. error: " << e << endl;
                     return;
                 }
-                
-                /*vpx_codec_err_t e = vpx_codec_decode(&codec, additionalData, additionalData, NULL, 0);
-                if (e) {
-                    cerr << "Failed to decode frame. error: " << e << endl;
-                    return;
-                }*/
-
-                vpx_codec_iter_t iter = NULL;
-                vpx_image_t* img = NULL;
 
                 // непосредственное декодирование
+                vpx_codec_iter_t iter = NULL;
+                vpx_image_t* img = NULL;
                 while((img = vpx_codec_get_frame(&codec, &iter))) {
-                    // вывод размеров
-                    //cout << "h: " << img->d_h << " w: " << img->d_w << endl;
-
-                    // номер кадра
-                    nframes++;
-
-                    SDL_Rect rect;
-                    rect.x = 0;
-                    rect.y = 0;
-                    rect.w = vparams.display_width;
-                    rect.h = vparams.display_height;
-
                     // блокировка записи-чтения оверлея
                     SDL_LockYUVOverlay(overlay);
                     // Y
@@ -306,21 +301,44 @@ void play_webm(char const* name) {
                                 overlay->pitches[2]);                           // сколько байт
                     }
                     // alpha
-                    /*for (int y = 0; y < img->d_h; ++y){
-                        memcpy( overlay->pixels[2] + (overlay->pitches[2]*y),   // куда
-                                img->planes[VPX_PLANE_ALPHA] + (img->stride[VPX_PLANE_ALPHA]*y),            // откуда
-                                overlay->pitches[2]);                           // сколько байт
+                    /*if ((videoCodec == NESTEGG_CODEC_VP9) && (img->fmt & VPX_IMG_FMT_HAS_ALPHA)){
+                        for (int y = 0; y < img->d_h; ++y){
+                            memcpy( overlay->pixels[2] + (overlay->pitches[2]*y),   // куда
+                                    img->planes[VPX_PLANE_ALPHA] + (img->stride[VPX_PLANE_ALPHA]*y),            // откуда
+                                    overlay->pitches[2]);                           // сколько байт
+                        }   
                     }*/
                     SDL_UnlockYUVOverlay(overlay);
-
-                    // отображем
-                    SDL_DisplayYUVOverlay(overlay, &rect);
                 }
 
-                //cout << "nframes: " << nframes;
-            }
+                // чтение дополнительной инфы (Альфа)
+                if (withAlpha) {
+                    // Выполнение декодирования альфы кадра
+                    vpx_codec_err_t alphaDecodeError = vpx_codec_decode(&alphaСodec, additionalData, additionalLength, NULL, 0);
+                    if (alphaDecodeError) {
+                        cerr << "Failed to decode frame. error: " << alphaDecodeError << endl;
+                        return;
+                    }
 
-            //cout << endl;
+                    // непосредственное декодирование
+                    vpx_codec_iter_t iter = NULL;
+                    vpx_image_t* img = NULL;
+                    while((img = vpx_codec_get_frame(&alphaСodec, &iter))) {
+                        // блокировка записи-чтения оверлея
+                        SDL_LockYUVOverlay(overlay);
+                        // Y (Alpha)
+                        for (int y = 0; y < img->d_h; ++y){
+                            memcpy( overlay->pixels[0] + (overlay->pitches[0]*y),   // куда
+                                    img->planes[VPX_PLANE_Y] + (img->stride[VPX_PLANE_Y]*y),            // откуда
+                                    overlay->pitches[0]);                           // сколько байт
+                        }
+                        SDL_UnlockYUVOverlay(overlay);
+                    }
+                }
+
+                // отображем
+                SDL_DisplayYUVOverlay(overlay, &rect);
+            }
         }
 
         // аудио не выводим
