@@ -2,6 +2,7 @@
 INCLUDE = -I. -Inestegg/include -Inestegg/halloc -Ilibvpx/vpx -Ilibvpx/vpx_codec -Ilibvpx/vpx_ports
 LIBS_PATH = -L. -L/usr/local/lib
 LIBS = -lvorbis -logg -lSDL vpx-build/libvpx.a
+CXXFLAGS = -std=c++11
 
 UNAME = $(shell uname -s)
 # Linux
@@ -31,10 +32,10 @@ nestegg/src/nestegg.o: nestegg/configure nestegg/src/nestegg.c
 	make -C nestegg
 
 webm.o: webm.cpp vpx-build/libvpx.a nestegg/src/nestegg.o
-	g++ -g -c $(INCLUDE) -o webm.o webm.cpp
+	g++ $(CXXFLAGS) -g -c $(INCLUDE) -o webm.o webm.cpp
 
 webm: webm.o nestegg/halloc/src/halloc.o nestegg/src/nestegg.o vpx-build/libvpx.a
-	g++ -g -o webm webm.o nestegg/halloc/src/halloc.o nestegg/src/nestegg.o $(LIBS_PATH) $(LIBS)
+	g++ $(CXXFLAGS) -g -o webm webm.o nestegg/halloc/src/halloc.o nestegg/src/nestegg.o $(LIBS_PATH) $(LIBS)
 
 clean: 
 	rm -f *.o webm && rm -r vpx-build && make -C nestegg clean

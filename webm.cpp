@@ -4,19 +4,33 @@
  * This program is made available under the ISC license.  See the
  * accompanying file LICENSE for details.
  */
+
+#define HAVE_STDINT_H 1
+
+#include <time.h>
 #include <iostream>
 #include <fstream>
 #include <cassert>
 #include <thread>
-
-#define HAVE_STDINT_H 1
+#include <chrono>
 extern "C" {
     #include "vpx_decoder.h"
     #include "vp8dx.h"
     #include "nestegg/nestegg.h"
 }
-
 #include <SDL/SDL.h>
+
+#define speedtest_code
+#ifdef speedtest_code           
+    #define speedtest_begin(RANDOM_ID) std::chrono::high_resolution_clock::time_point t1##RANDOM_ID = std::chrono::high_resolution_clock::now();
+    #define speedtest_end(RANDOM_ID) std::chrono::high_resolution_clock::time_point t2##RANDOM_ID = std::chrono::high_resolution_clock::now(); \
+        auto duration##RANDOM_ID = std::chrono::duration_cast<std::chrono::microseconds>( t2##RANDOM_ID - t1##RANDOM_ID ).count(); \
+        cout << #RANDOM_ID" executionTime: " << duration##RANDOM_ID << " microSec" << endl;
+#else
+    #define speedtest_begin(RANDOM_ID) {}
+    #define speedtest_end(RANDOM_ID) {}
+#endif
+
 
 using namespace std;
 
@@ -269,19 +283,23 @@ void play_webm(char const* name) {
                 cout << "keyframe: " << (si.is_kf ? "yes" : "no") << "\t " << "length: " << length << "\t ";
                 */
 
+                speedtest_begin(Decode_normal)
                 // Выполнение декодирования кадра
                 vpx_codec_err_t e = vpx_codec_decode(&codec, data, length, NULL, 0);
                 if (e) {
                     cerr << "Failed to decode frame. error: " << e << endl;
                     return;
                 }
+                speedtest_end(Decode_normal)
 
-                // непосредственное декодирование
+                SDL_LockYUVOverlay(overlay);
+
+                // непосредственное копирование
+                speedtest_begin(Copy_normal)
                 vpx_codec_iter_t iter = NULL;
                 vpx_image_t* img = NULL;
                 while((img = vpx_codec_get_frame(&codec, &iter))) {
                     // блокировка записи-чтения оверлея
-                    SDL_LockYUVOverlay(overlay);
                     // Y
                     for (int y = 0; y < img->d_h; ++y){
                         memcpy( overlay->pixels[0] + (overlay->pitches[0]*y),   // куда
@@ -308,33 +326,37 @@ void play_webm(char const* name) {
                                     overlay->pitches[2]);                           // сколько байт
                         }   
                     }*/
-                    SDL_UnlockYUVOverlay(overlay);
                 }
+                speedtest_end(Copy_normal)
 
                 // чтение дополнительной инфы (Альфа)
                 if (withAlpha) {
+                    speedtest_begin(Alpha_decode)
                     // Выполнение декодирования альфы кадра
                     vpx_codec_err_t alphaDecodeError = vpx_codec_decode(&alphaСodec, additionalData, additionalLength, NULL, 0);
                     if (alphaDecodeError) {
                         cerr << "Failed to decode frame. error: " << alphaDecodeError << endl;
                         return;
                     }
+                    speedtest_end(Alpha_decode)
 
                     // непосредственное декодирование
+                    speedtest_begin(Alpha_copy)
                     vpx_codec_iter_t iter = NULL;
                     vpx_image_t* img = NULL;
                     while((img = vpx_codec_get_frame(&alphaСodec, &iter))) {
                         // блокировка записи-чтения оверлея
-                        SDL_LockYUVOverlay(overlay);
                         // Y (Alpha)
                         for (int y = 0; y < img->d_h; ++y){
                             memcpy( overlay->pixels[0] + (overlay->pitches[0]*y),   // куда
                                     img->planes[VPX_PLANE_Y] + (img->stride[VPX_PLANE_Y]*y),            // откуда
                                     overlay->pitches[0]);                           // сколько байт
                         }
-                        SDL_UnlockYUVOverlay(overlay);
                     }
+                    speedtest_end(Alpha_copy)
                 }
+
+                SDL_UnlockYUVOverlay(overlay);
 
                 // отображем
                 SDL_DisplayYUVOverlay(overlay, &rect);
