@@ -20,7 +20,7 @@ extern "C" {
 }
 #include <SDL/SDL.h>
 
-#define speedtest_code
+//#define speedtest_code
 #ifdef speedtest_code           
     #define speedtest_begin(RANDOM_ID) std::chrono::high_resolution_clock::time_point t1##RANDOM_ID = std::chrono::high_resolution_clock::now();
     #define speedtest_end(RANDOM_ID) std::chrono::high_resolution_clock::time_point t2##RANDOM_ID = std::chrono::high_resolution_clock::now(); \

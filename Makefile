@@ -11,6 +11,7 @@ ifeq "$(UNAME)" "Linux"
 endif
 # OSX
 ifeq "$(UNAME)" "Darwin"
+	VPX_CONFIGURE_FLAGS = --enable-pic --disable-examples --disable-docs --target=x86_64-darwin13-gcc
 	INCLUDE += -I/opt/local/include -I/usr/local/include
 	LIBS += -lSDLmain -framework Carbon -framework CoreAudio -framework AudioToolbox -framework AudioUnit -framework Cocoa
 endif
@@ -20,7 +21,7 @@ endif
 all: webm
 
 vpx-build/vpx_config.h: libvpx/configure
-	mkdir -p vpx-build && cd vpx-build && ../libvpx/configure
+	mkdir -p vpx-build && cd vpx-build && ../libvpx/configure $(VPX_CONFIGURE_FLAGS)
 
 vpx-build/libvpx.a: vpx-build/vpx_config.h
 	cd vpx-build && make
